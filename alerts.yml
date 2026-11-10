@@ -1,0 +1,54 @@
+name: Ogohlantirish va bot buyruqlari
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # har 10 daqiqada (GitHub ba'zan bir necha daqiqa kechiktiradi)
+  workflow_dispatch:
+
+concurrency:
+  group: alerts
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      AMO_BASE_URL: ${{ secrets.AMO_BASE_URL }}
+      AMO_TOKEN: ${{ secrets.AMO_TOKEN }}
+      TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+      TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+      PIPELINE_NAME: ${{ vars.PIPELINE_NAME }}
+      DELIVERED_STAGE: ${{ vars.DELIVERED_STAGE }}
+      NEW_STAGE: ${{ vars.NEW_STAGE }}
+      MISSED_STAGE: ${{ vars.MISSED_STAGE }}
+      HISTORY_FROM: ${{ vars.HISTORY_FROM }}
+      PRICE_CAP: ${{ vars.PRICE_CAP }}
+      ALERT_MINUTES: ${{ vars.ALERT_MINUTES }}
+      ALERT_ESCALATE_MINUTES: ${{ vars.ALERT_ESCALATE_MINUTES }}
+      WORK_FROM_HOUR: ${{ vars.WORK_FROM_HOUR }}
+      WORK_TO_HOUR: ${{ vars.WORK_TO_HOUR }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Holatni tiklash
+        uses: actions/cache/restore@v4
+        with:
+          path: state.json
+          key: state-${{ github.run_id }}
+          restore-keys: state-
+      - name: Ogohlantirishlar
+        run: python -m app.main alerts
+      - name: Bot buyruqlari
+        if: always()
+        run: python -m app.main poll
+      - name: Holatni saqlash
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: state.json
+          key: state-${{ github.run_id }}
