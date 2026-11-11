@@ -8,19 +8,33 @@ class AmoError(Exception):
 
 
 class Amo:
-    def __init__(self, base_url, token, pause=0.16):
+    def __init__(self, base_url, token, pause=0.2):
         if not base_url or not token:
             raise AmoError("AMO_BASE_URL va AMO_TOKEN kiritilmagan.")
         self.base = base_url.rstrip("/")
-        self.s = requests.Session()
-        self.s.headers.update({"Authorization": f"Bearer {token}", "Accept": "application/json"})
+        self.token = token
         self.pause = pause  # amoCRM: sekundiga 7 ta so'rovdan oshmasin
+        self._new_session()
 
-    def get(self, path, params=None, retries=5):
+    def _new_session(self):
+        self.s = requests.Session()
+        self.s.headers.update({
+            "Authorization": f"Bearer {self.token}",
+            "Accept": "application/json",
+            "Connection": "close",  # eski (uzilgan) ulanishlar muammosini oldini oladi
+        })
+
+    def get(self, path, params=None, retries=8):
         url = path if path.startswith("http") else self.base + path
         for i in range(retries):
             time.sleep(self.pause)
-            r = self.s.get(url, params=params, timeout=60)
+            try:
+                r = self.s.get(url, params=params, timeout=60)
+            except requests.exceptions.RequestException:
+                # tarmoq uzilishi: yangi ulanish ochib, biroz kutib qayta urinamiz
+                self._new_session()
+                time.sleep(3 * (i + 1))
+                continue
             if r.status_code == 204:
                 return None
             if r.status_code == 429 or r.status_code >= 500:
