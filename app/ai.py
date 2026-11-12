@@ -6,7 +6,8 @@ import time
 
 import requests
 
-API_URL = "https://api.anthropic.com/v1/messages"
+ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 SYSTEM = (
     "Siz Pepito (bolalar tovarlari, Toshkent, yetkazib berish) kompaniyasining sotuv tahlilchisisiz. "
@@ -22,7 +23,7 @@ SYSTEM = (
 
 
 def enabled(cfg):
-    return bool(cfg.ai_key)
+    return bool(cfg.ai_provider)
 
 
 def strip_html(t):
@@ -37,32 +38,46 @@ def clean_answer(t):
     return t.strip()
 
 
-def _call(cfg, user, max_tokens=700):
-    body = {"model": cfg.ai_model, "max_tokens": max_tokens, "system": SYSTEM,
-            "messages": [{"role": "user", "content": user}]}
-    headers = {"x-api-key": cfg.ai_key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
+def _post(url, headers, body):
     last = None
     for i in range(3):
         try:
-            r = requests.post(cfg.ai_url, json=body, headers=headers, timeout=90)
+            r = requests.post(url, json=body, headers=headers, timeout=90)
         except requests.exceptions.RequestException as ex:
             last = ex
             time.sleep(2 * (i + 1))
             continue
         if r.status_code in (429, 500, 502, 503, 529):
             last = RuntimeError(f"AI {r.status_code}")
-            time.sleep(3 * (i + 1))
+            time.sleep(4 * (i + 1))
             continue
-        if r.status_code == 401:
-            raise RuntimeError("AI: ANTHROPIC_API_KEY noto'g'ri.")
+        if r.status_code in (400, 401, 403) and "key" in r.text.lower():
+            raise RuntimeError("AI: API kaliti noto'g'ri yoki ruxsat yo'q.")
         if r.status_code >= 400:
             raise RuntimeError(f"AI {r.status_code}: {r.text[:200]}")
-        data = r.json()
-        text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
-        if not text.strip():
-            raise RuntimeError("AI bo'sh javob qaytardi.")
-        return clean_answer(text)
+        return r.json()
     raise RuntimeError(f"AI javob bermadi: {last}")
+
+
+def _call(cfg, user, max_tokens=700):
+    if cfg.ai_provider == "anthropic":
+        data = _post(cfg.ai_url or ANTHROPIC_URL,
+                     {"x-api-key": cfg.ai_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+                     {"model": cfg.ai_model, "max_tokens": max_tokens, "system": SYSTEM,
+                      "messages": [{"role": "user", "content": user}]})
+        text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
+    else:  # gemini
+        url = cfg.ai_url or GEMINI_URL.format(model=cfg.ai_model)
+        data = _post(url, {"x-goog-api-key": cfg.gemini_key, "content-type": "application/json"},
+                     {"systemInstruction": {"parts": [{"text": SYSTEM}]},
+                      "contents": [{"role": "user", "parts": [{"text": user}]}],
+                      "generationConfig": {"maxOutputTokens": max_tokens * 3}})
+        cands = data.get("candidates") or []
+        parts = ((cands[0].get("content") or {}).get("parts") or []) if cands else []
+        text = "".join(p.get("text", "") for p in parts)
+    if not text.strip():
+        raise RuntimeError("AI bo'sh javob qaytardi.")
+    return clean_answer(text)
 
 
 def summarize(cfg, report_text, period):
