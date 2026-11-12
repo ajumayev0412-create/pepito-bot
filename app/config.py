@@ -37,9 +37,13 @@ class Config:
         self.state_file = _e("STATE_FILE", "state.json")
 
         # Sun'iy intellekt (ixtiyoriy). Kalit bo'lmasa, AI qismi o'chiq turadi.
+        # Ikki variant: Anthropic (Claude, pullik) yoki Google Gemini (bepul tarif mavjud).
         self.ai_key = _e("ANTHROPIC_API_KEY")
-        self.ai_model = _e("AI_MODEL", "claude-sonnet-5-5")
-        self.ai_url = _e("AI_API_URL", "https://api.anthropic.com/v1/messages")
+        self.gemini_key = _e("GEMINI_API_KEY")
+        self.ai_provider = "anthropic" if self.ai_key else ("gemini" if self.gemini_key else "")
+        default_model = "claude-sonnet-5-5" if self.ai_provider == "anthropic" else "gemini-2.5-flash"
+        self.ai_model = _e("AI_MODEL", default_model)
+        self.ai_url = _e("AI_API_URL", "")  # faqat sinov uchun
         self.ai_daily_limit = int(_e("AI_DAILY_LIMIT", "30"))  # kuniga /savol soni
 
     def now(self):
