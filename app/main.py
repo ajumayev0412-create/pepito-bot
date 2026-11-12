@@ -9,14 +9,15 @@ from .config import Config
 from .amocrm import Amo, AmoError
 from .model import build_leads, assign_customers, contact_keys
 from .metrics import age_minutes
-from . import reports
+from . import reports, ai
 from .telegram import Telegram
 
 HELP = ("🤖 <b>Pepito hisobot boti</b>\n"
         "/bugun — bugungi natija\n"
         "/hafta — oxirgi 7 kun (oldingi 7 kun bilan solishtirma)\n"
         "/oy — shu oy boshidan\n"
-        "/tegilmagan — «Yangi lid»da tegilmagan leadlar\n\n"
+        "/tegilmagan — «Yangi lid»da tegilmagan leadlar\n"
+        "/savol &lt;savol&gt; — AI ga hisobot haqida savol (masalan: /savol qaysi sotuvchi sust?)\n\n"
         "<i>Buyruqqa javob 10 daqiqagacha kechikishi mumkin.</i>")
 
 
@@ -114,6 +115,44 @@ def text_untouched(cfg, amo, now):
     return "\n".join(["📋 <b>Tegilmagan leadlar</b>"] + reports.untouched_lines(leads, cfg, now))
 
 
+# ---------- AI ----------
+def with_ai(cfg, text, period):
+    """Hisobot oxiriga AI xulosa qo'shadi. AI ishlamasa, hisobot baribir yuboriladi."""
+    if not ai.enabled(cfg):
+        return text
+    try:
+        return text + "\n\n🤖 <b>AI xulosa</b>\n" + reports.e(ai.summarize(cfg, text, period))
+    except Exception as ex:  # noqa
+        print("AI xatosi:", ex)
+        return text
+
+
+def parse_command(text):
+    """'/savol@bot  qaysi ...' -> ('/savol', 'qaysi ...')"""
+    parts = (text or "").strip().split(None, 1)
+    if not parts:
+        return "", ""
+    return parts[0].lower().split("@")[0], (parts[1].strip() if len(parts) > 1 else "")
+
+
+def ai_allowed(cfg, state, now):
+    day = now.strftime("%Y-%m-%d")
+    c = state.get("ai") or {}
+    if c.get("date") != day:
+        c = {"date": day, "n": 0}
+    if c["n"] >= cfg.ai_daily_limit:
+        return False
+    c["n"] += 1
+    state["ai"] = c
+    return True
+
+
+def ai_context(cfg, leads, now):
+    parts = [text_today(cfg, leads, now), text_week_rolling(cfg, leads, now), reports.month_text(cfg, leads, now),
+             "\n".join(reports.untouched_lines(leads, cfg, now))]
+    return "\n\n".join(ai.strip_html(p) for p in parts)
+
+
 # ---------- ogohlantirish ----------
 def run_alerts(cfg, amo, tg):
     now = cfg.now()
@@ -169,7 +208,7 @@ def run_poll(cfg, amo, tg):
         chat = str(msg.get("chat", {}).get("id", ""))
         if chat not in cfg.chat_ids:
             continue
-        cmd = (msg.get("text") or "").strip().lower().split()[0].split("@")[0] if msg.get("text") else ""
+        cmd, args = parse_command(msg.get("text"))
         now = cfg.now()
         try:
             if cmd in ("/start", "/yordam", "/help"):
@@ -182,6 +221,16 @@ def run_poll(cfg, amo, tg):
                 out = reports.month_text(cfg, history(), now)
             elif cmd == "/tegilmagan":
                 out = text_untouched(cfg, amo, now)
+            elif cmd == "/savol":
+                if not ai.enabled(cfg):
+                    out = "AI hali yoqilmagan (ANTHROPIC_API_KEY kiritilmagan)."
+                elif not args:
+                    out = "Savolni buyruqdan keyin yozing. Masalan: /savol qaysi sotuvchining qayta murojaatdan sotuvi kam?"
+                elif not ai_allowed(cfg, state, now):
+                    out = f"Bugungi AI savollar limiti ({cfg.ai_daily_limit}) tugadi. Ertaga qayta urinib ko'ring."
+                else:
+                    ans = ai.answer(cfg, args[:500], ai_context(cfg, history(), now))
+                    out = "🤖 " + reports.e(ans)
             else:
                 continue
         except Exception as ex:  # noqa
@@ -261,9 +310,9 @@ def main(argv):
         if cmd == "test":
             run_test(cfg, amo, tg)
         elif cmd == "daily":
-            tg.send(text_daily(cfg, load_history(cfg, amo), now))
+            tg.send(with_ai(cfg, text_daily(cfg, load_history(cfg, amo), now), "kun"))
         elif cmd == "weekly":
-            tg.send(text_weekly(cfg, load_history(cfg, amo), now))
+            tg.send(with_ai(cfg, text_weekly(cfg, load_history(cfg, amo), now), "hafta"))
         elif cmd == "today":
             tg.send(text_today(cfg, load_history(cfg, amo), now))
         elif cmd == "week":

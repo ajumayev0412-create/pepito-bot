@@ -36,6 +36,12 @@ class Config:
         self.price_cap = int(_e("PRICE_CAP", "50000000"))
         self.state_file = _e("STATE_FILE", "state.json")
 
+        # Sun'iy intellekt (ixtiyoriy). Kalit bo'lmasa, AI qismi o'chiq turadi.
+        self.ai_key = _e("ANTHROPIC_API_KEY")
+        self.ai_model = _e("AI_MODEL", "claude-sonnet-5-5")
+        self.ai_url = _e("AI_API_URL", "https://api.anthropic.com/v1/messages")
+        self.ai_daily_limit = int(_e("AI_DAILY_LIMIT", "30"))  # kuniga /savol soni
+
     def now(self):
         ov = _e("NOW_OVERRIDE")  # faqat sinov uchun
         if ov:
